@@ -1,15 +1,17 @@
-"""Module which adds fallback_unit to :meth:`CCDData.read() <~astropy.nddata.CCDData.read>`
+"""Module which defines :class:`FbuCCDData`, a fallback unit version of :class:`~astropy.nddata.CCDData`
 """
 
 from astropy import log
 from astropy.io import fits
 from astropy.nddata import CCDData, fits_ccddata_reader
+from astropy.units import Quantity
 
 def fallback_unit_ccddata_reader(filename, *args, 
                                  unit=None,
                                  fallback_unit=None,
                                  **kwargs):
-    """Wrapper around `~astropy.nddata.fits_ccddata_reader` to add fallback unit capability
+    """Wrapper around `~astropy.nddata.fits_ccddata_reader` to add
+    fallback unit capability
 
     Parameters
     ---------
@@ -31,7 +33,7 @@ def fallback_unit_ccddata_reader(filename, *args,
     kwargs :
         Keywords to pass to `~astropy.nddata.fits_ccddata_reader`
 
-"""
+    """
     if unit is not None:
         return fits_ccddata_reader(filename, *args,
                                    unit=unit, **kwargs)
@@ -48,7 +50,8 @@ def fallback_unit_ccddata_reader(filename, *args,
                 # fits_ccddata_reader will find BUNIT again.
                 # We have to do it without unit=bunit to avoid
                 # annoying message
-                return fits_ccddata_reader(filename, *args, **kwargs)
+                return fits_ccddata_reader(filename,
+                                           *args, unit=unit, **kwargs)
             except ValueError:
                 # BUNIT may not be valid
                 log.warning(f'Potentially invalid BUNIT '
@@ -74,23 +77,91 @@ class FbuCCDData(CCDData):
     Example
     -------
     >>> class MyCCDData(FbuCCDData):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, fallback_unit='adu', **kwargs)
+            def __init__(self, data, my_key=None, **kwargs):
+                super().__init__(data, fallback_unit='adu', **kwargs)
+                self.my_prop = my_key
 
     """
-    def __init__(self, *args,
+    def __init__(self, data,
                  filename=None,
+                 unit=None,
                  fallback_unit=None,
                  **kwargs):
         if filename is not None:
-            ccd = fallback_unit_ccddata_reader(filename, *args, 
+            ccd = fallback_unit_ccddata_reader(filename, 
+                                               unit=unit,
                                                fallback_unit=fallback_unit,
                                                **kwargs)
             self.__dict__.update(ccd.__dict__)
         else:
-            super().__init__(*args, **kwargs)
+        #    # Catch all possible cases where unit is specified in the
+        #    # data somehow.  If not and we have not specified our unit
+        #    # explicitly, use our fallback unit
+        #    try:
+        #        # data is already NDData-like
+        #        dataunnit = data.unit
+        #    except:
+        #        dataunnit = None
+        #    if (unit is None
+        #        and not isinstance(data, Quantity)
+        #        and dataunnit is None):
+        #        unit = fallback_unit
+            super().__init__(data, unit=unit, **kwargs)
 
     @classmethod
     def read(cls, filename, *args, **kwargs):
         """See `fallback_unit_ccddata_reader`"""
-        return cls(*args, filename=filename, **kwargs)
+        return cls(None, filename=filename, **kwargs)
+
+
+if __name__ == "__main__":
+    # tests
+    log.setLevel('DEBUG')
+    rawname = '/data/Mercury/raw/2020-05-27/Mercury-0005_Na-on.fit'
+    redname = '/data/io/IoIO/reduced/Calibration/2020-07-07_ccdT_-10.3_bias_combined.fits'
+    rawccd = FbuCCDData.read(rawname, fallback_unit='adu')
+    print(rawccd.unit)
+    rawccd = FbuCCDData.read(rawname, unit='electron')
+    print(rawccd.unit)
+    # Didn't know this feature came along for free!
+    rawccd = FbuCCDData(rawccd)
+    print(rawccd.unit)
+    rawccd = FbuCCDData(rawccd.data, unit='parsec')
+    print(rawccd.unit)
+    rawccd = FbuCCDData(rawccd.data, fallback_unit='Msun')
+    print(rawccd.unit)
+    #
+    print('========= redccd tests ===========')
+    redccd = FbuCCDData.read(redname)
+    print(redccd.unit)
+    redccd = FbuCCDData.read(redname, unit='adu')
+    print(redccd.unit)
+    redccd = FbuCCDData.read(redname, unit='electron')
+    print(redccd.unit)
+    redccd = FbuCCDData.read(redname, fallback_unit='adu')
+    print(redccd.unit)
+    #
+    print('========= unit tests ===========')
+    from astropy import units as u
+    rawccd = FbuCCDData.read(rawname, fallback_unit='adu')
+    print(rawccd.unit)
+    gain = 1*u.electron/u.adu
+    print(gain)
+    rawccd = rawccd.multiply(gain)
+    print(rawccd.unit)
+    
+    ccd = CCDData.read(rawname, unit='adu')
+    ccd = ccd.multiply(gain)
+    print(ccd.unit)
+
+    print('========= inherited unit tests ===========')
+
+
+    class RedCorCCDData(FbuCCDData):
+        def __init__(self, data, **kwargs):
+            super().__init__(data, fallback_unit='adu', **kwargs)
+    
+    rawccd = RedCorCCDData.read(rawname)
+    print(rawccd.unit)
+    rawccd = rawccd.multiply(gain)
+    print(rawccd.unit)
