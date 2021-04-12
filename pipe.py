@@ -9,6 +9,8 @@ import ccdproc as ccdp
 
 from bigmultipipe import BigMultiPipe
 
+# This subclass of CCDData is a better choice than ccddata_read
+# from utils.fallback_unit import FbuCCDData
 
 #def ccddata_read(fname_or_ccd,
 #                 raw_unit=u.adu,
@@ -126,7 +128,7 @@ class CCDMultiPipe(BigMultiPipe):
                  outname_append='_ccdmp',
                  overwrite=False,
                  **kwargs):
-        self.ccddata_cls = CCDData if ccddata_cls is None else ccddata_cls
+        self.ccddata_cls = ccddata_cls or CCDData
         self.naxis1 = naxis1
         self.naxis2 = naxis2
         if bitpix is None:
