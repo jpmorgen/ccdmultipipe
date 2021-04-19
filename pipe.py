@@ -118,6 +118,7 @@ class CCDMultiPipe(BigMultiPipe):
 
     """
 
+    ccddata_cls = CCDData
     def __init__(self,
                  ccddata_cls=None,
                  process_size=None,
@@ -128,7 +129,7 @@ class CCDMultiPipe(BigMultiPipe):
                  outname_append='_ccdmp',
                  overwrite=False,
                  **kwargs):
-        self.ccddata_cls = ccddata_cls or CCDData
+        self.ccddata_cls = ccddata_cls or self.ccddata_cls
         self.naxis1 = naxis1
         self.naxis2 = naxis2
         if bitpix is None:
@@ -212,7 +213,10 @@ class CCDMultiPipe(BigMultiPipe):
 
         """
         kwargs = self.kwargs_merge(**kwargs)
-        data = ccddata_cls.read(in_name, **kwargs)
+        # If there are any kwargs expected for the underlying FITS
+        # read stuff, accept them explicitly to file_read and pass
+        # them here.
+        data = self.ccddata_cls.read(in_name)
         return data
 
     def file_write(self, data, outname, 
