@@ -1,13 +1,17 @@
 """Module which defines :class:`FbuCCDData`, a fallback unit version of :class:`~astropy.nddata.CCDData`
 """
 
+import warnings
+
 from astropy import log
 from astropy.io import fits
 from astropy.nddata import CCDData, fits_ccddata_reader
+from astropy.wcs import FITSFixedWarning
 
 def fallback_unit_ccddata_reader(filename, *args, 
                                  unit=None,
                                  fallback_unit=None,
+                                 warning_filter_list=None,
                                  **kwargs):
     """Wrapper around `~astropy.nddata.fits_ccddata_reader` to add
     fallback unit capability
@@ -33,9 +37,31 @@ def fallback_unit_ccddata_reader(filename, *args,
         Keywords to pass to `~astropy.nddata.fits_ccddata_reader`
 
     """
+    #with fits.open(filename, memmap=True) as hdul:
+    #    # --> Try inserting code here to fix other annoying bugs/messages
+    #    # --> This would be a good place for a general hook
+    #    hdr = hdul[0].header
+    #    radecsys = hdr.get('RADECSYS')
+    #    if radecsys is not None:
+    #        hdr.insert('RADECSYS',
+    #                   ('RADESYS', radecsys, hdr.comments['RADECSYS']))
+    #        del hdr['RADECSYS']
+    #    print(hdr)
+        
+    # Thanks to https://github.com/prob-ml/bliss/pull/181/commits/81d6a5863772b129c746d6569590d83d10f0a72d for the hint to filter warnings
+
+    warning_filter_list = [FITSFixedWarning]
+    if warning_filter_list is None:
+        warning_filter_list = []
     if unit is not None:
-        return fits_ccddata_reader(filename, *args,
-                                   unit=unit, **kwargs)
+        with warnings.catch_warnings():
+            for w in warning_filter_list:
+                warnings.filterwarnings("ignore", category=w)
+            return fits_ccddata_reader(filename, *args,
+                                       unit=unit, **kwargs)
+        #return ccd
+    #if warning_filter_list is None:
+    #    warning_filter_list = 
     # Open the file and read the primary hdr to see if there is a
     # BUNIT there.  Do the open as an memmap to minimize overhead
     # on the second file read in fits_ccddata_reader.  Having the
@@ -49,17 +75,45 @@ def fallback_unit_ccddata_reader(filename, *args,
                 # fits_ccddata_reader will find BUNIT again.
                 # We have to do it without unit=bunit to avoid
                 # annoying message
-                return fits_ccddata_reader(filename,
-                                           *args, unit=unit, **kwargs)
+                with warnings.catch_warnings():
+                    for w in warning_filter_list:
+                        warnings.filterwarnings("ignore", category=w)
+                    return fits_ccddata_reader(filename,
+                                               *args, unit=unit, **kwargs)
             except ValueError:
                 # BUNIT may not be valid
                 log.warning(f'Potentially invalid BUNIT '
                             'value {bunit} detected in FITS '
                             'header.  Falling back to {fallback_unit}')
-        # If we made it here, there is no BUNIT in the header or it is invalid
-        return fits_ccddata_reader(filename, *args,
-                                   unit=fallback_unit, **kwargs)
 
+        # If we made it here, there is no BUNIT in the header or it is invalid
+        with warnings.catch_warnings():
+            for w in warning_filter_list:
+                warnings.filterwarnings("ignore", category=w)
+            return fits_ccddata_reader(filename, *args,
+                                       unit=fallback_unit, **kwargs)
+        #return ccd
+
+
+class FilterWarningCCDData(CCDData):
+    warning_filter_list = []
+
+    def __init__(self, *args,
+                 warning_filter_list=None,
+                 **kwargs):
+        self.warning_filter_list = warning_filter_list or self.warning_filter_list
+        with warnings.catch_warnings():
+            for w in self.warning_filter_list:
+                warnings.filterwarnings("ignore", category=w)
+            super().__init__(*args, **kwargs)
+
+    @classmethod
+    def read(cls, *args, **kwargs):
+        with warnings.catch_warnings():
+            for w in cls.warning_filter_list:
+                warnings.filterwarnings("ignore", category=w)
+            return super(FilterWarningCCDData, cls).read(*args, **kwargs)
+    
 
 class FbuCCDData(CCDData):
     """Enable 3-level treatment of ``unit`` specification for
@@ -91,7 +145,7 @@ class FbuCCDData(CCDData):
     `~astropy.nddata.CCDData`-like class always default to ``adu`` if
     ``unit`` is not specified in any other way.
 
-    >>> class MyCCDData(FbuCCDData):
+    >>> class MyCCDData(FbuCCDData:
     >>>     fallback_unit = 'adu'
     >>>     ....
 
@@ -105,13 +159,16 @@ class FbuCCDData(CCDData):
 
     """
     fallback_unit = None
+    ccddata_reader = fallback_unit_ccddata_reader
     def __init__(self, data,
                  filename=None,
                  unit=None,
                  fallback_unit=None,
+                 ccddata_reader=None,
                  meta=None,
                  **kwargs):
         fallback_unit = fallback_unit or self.fallback_unit
+        ccddata_reader = ccddata_reader or self.ccddata_reader
         # Enable fallback_unit in direct instantiation case.  This
         # requires us to catch the case where the data is already a
         # Quantity or NDData-like and meta may has a BUNIT keyword
@@ -132,7 +189,18 @@ class FbuCCDData(CCDData):
              **kwargs):
         """See `fallback_unit_ccddata_reader`"""
         fallback_unit = fallback_unit or cls.fallback_unit
-        ccd = fallback_unit_ccddata_reader(filename,
-                                           fallback_unit=fallback_unit,
-                                           **kwargs)
+        ccd = cls.ccddata_reader(filename,
+                                 fallback_unit=fallback_unit,
+                                 **kwargs)
         return cls(ccd, **kwargs)
+
+rawname = '/data/io/IoIO/raw/20210310/HD 187013-S002-R001-C001-R.fts'
+#ccd = FbuCCDData.read(rawname, fallback_unit='adu')
+#ccd = CCDData.read(rawname, unit='adu')
+#ccd = FbuCCDData(ccd)
+
+class FbuFwCCDdata(FilterWarningCCDData, FbuCCDData):
+    warning_filter_list = [FITSFixedWarning]
+    pass
+
+ccd = FbuFwCCDdata.read(rawname, fallback_unit='adu')
