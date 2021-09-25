@@ -2,10 +2,13 @@
 
 """
 
+import os
+
+import numpy as np
+
 from astropy import log
 from astropy import units as u
 from astropy.nddata import CCDData
-import ccdproc as ccdp
 
 from bigmultipipe import BigMultiPipe
 
@@ -194,17 +197,21 @@ class CCDMultiPipe(BigMultiPipe):
                                 **kwargs)
 
     def file_read(self, in_name, **kwargs):
-        """Reads FITS file from disk into `~astropy.nddata.CCDData`
+        """Reads FITS file(s) from disk
 
         Parameters
         ----------
-        in_name : str
-            Name of FITS file to read
+        in_name : str or list
+            If `str`, name of FITS file to read.  If `list`, each
+            element in list is processed recursively so that multiple
+            files can be considered a single "data" in `bigmultipipe`
+            nomenclature
 
         kwargs : kwargs
-            Passed to :meth:`ccddata_cls.read`
-            See also: Notes in :class:`bigmultipipe.BigMultiPipe`
-            Parameter section 
+            kwargs for any underlying routines.  However, *all*
+            routines must accept all kwargs, so if underlying routines
+            can only handle specific kwargs, they must be accepted to
+            file_read and passed explicitly to the underlying routines
 
         Returns
         -------
@@ -213,15 +220,44 @@ class CCDMultiPipe(BigMultiPipe):
 
         """
         kwargs = self.kwargs_merge(**kwargs)
-        # If there are any kwargs expected for the underlying FITS
-        # read stuff, accept them explicitly to file_read and pass
-        # them here.
-        data = self.ccddata_cls.read(in_name)
-        return data
+        if isinstance(in_name, str):
+            return self.ccddata_cls.read(in_name)
+        # Allow list (of lists...) to be read into a "data"
+        return [self.file_read(name, **kwargs)
+                for name in in_name]
 
-    def file_write(self, data, outname, 
-                    overwrite=None,
-                    **kwargs):
+    def outname_create(self, *args,
+                       outname_ext=None,
+                       **kwargs):
+        """Create output filename (including path)
+
+        Parameters
+        ----------
+        \*args : required
+            Passed to :meth:`bigmultipipe.Bigmultipipe.outname_create`
+            (e.g. in_name)
+
+        outname_ext : str or None, optional
+            Extension of output filename.  Useful for accepting .fts
+            files as input and writing them as .fits files
+            Default is ``None``
+
+        \*\*kwargs : optional
+            Passed to :meth:`bigmultipipe.Bigmultipipe.outname_create` 
+        """
+        outname = super().outname_create(*args, **kwargs)
+        if outname_ext is None:
+            return outname
+        base, _ = os.path.splitext(outname)
+        outname = base + outname_ext
+        return outname
+
+    def file_write(self, data, outname,
+                   as_scaled_int=False,
+                   bscale=None,
+                   bzero=None,
+                   overwrite=None,
+                   **kwargs):
         """Write `~astropy.nddata.CCDData` as FITS file file.
 
         Parameters
@@ -231,6 +267,24 @@ class CCDMultiPipe(BigMultiPipe):
 
         outname : str
             Name of file to write
+
+        as_scaled_int : bool
+            If ``True`` convert floating point extensions to 16-bit
+            scaled integers as per ``bscale`` or ``bzero``.  If
+            ``bscale`` and ``bzero`` are not specified, they are
+            created using min and max.  See Notes and as_single
+            post-processing routine
+
+        bscale, bzero : number or None
+            When scaling with as_scaled_int, these are used to scale
+            data from physical values to int16: 
+            physical value = BSCALE * (storage value) + BZERO
+            If ``None``, created using data min and max.
+            Default is ``None``
+
+        overwrite : bool
+            If ``True`` overwrite existing file of same name
+            Default is ``False``
 
         kwargs : kwargs
             Passed to :meth`CCDData.write() <astropy.nddata.CCDData.write>`
@@ -242,30 +296,89 @@ class CCDMultiPipe(BigMultiPipe):
         outname : str
             Name of file written
 
+        Notes
+        -----
+
+        Use of ``as_scaled_int`` is officially discouraged by the
+        `astropy.io.fits.PrimaryHDU` documentation because of expense
+        in computation and memory.  However, when viewed as a means of
+        compressing data, this argument falls short: all compression
+        takes some amount of computation and memory.  For typical
+        image data, gzip provides compression at the 90% level;
+        ``as_scaled_int`` provides compression of a factor of 4
+        (assuming doubles as input).  However, significant loss of
+        precision will occur with ``as_scaled_int`` if care is not
+        taken to clip high and low values.  
+
+        The post-processing routine as_single provides a compression of a
+        factor of 2, reasonable data precision, and no need to clip.
+        
+
         """
         kwargs = self.kwargs_merge(**kwargs)
         if overwrite is None:
             overwrite = self.overwrite
-        data.write(outname, overwrite=overwrite)
+        if as_scaled_int:
+            hdul = data.to_hdu()
+            hdul[0].scale(type='int16', option='minmax')
+            try:
+                iuncert = hdul.index_of('UNCERT')
+                hdul[iuncert].scale(type='int16', option='minmax',
+                                    bscale=bscale, bzero=bzero)
+            except:
+                pass
+            hdul.writeto(outname, overwrite=overwrite)
+        else:
+            data.write(outname, overwrite=overwrite)
         return outname
-    
-    def data_process(self, data, **kwargs):
-        """Process data using :func:`ccdproc.ccd_process`
-        
-        Parameters
-        ----------
-        data : `~astropy.nddata.CCDData`
-            Data to process
 
-        kwargs : kwargs
-            Passed to :func:`ccdproc.ccd_process`
-            See also: Notes in :class:`bigmultipipe.BigMultiPipe`
-            Parameter section 
+#############################
+# Post-processing routines
+#############################
+def as_single(ccd_in,
+              as_single_datatype=None,
+              **kwargs):
+    """CCDMultiPipe post-processing routine to convert ccd data and
+    uncertainty arrays to an alternate (usually smaller)
+    datatype
 
-        """
-        kwargs = self.kwargs_merge(**kwargs)
-        data = ccdp.ccd_process(data, **kwargs)
-        return data
+    Parameters
+    ----------
+    ccd_in : `~astropy.nddata.CCDData`
+        Input `~astropy.nddata.CCDData` object
+
+    as_single_datatype : `numpy` datatype
+        Datatype to convert primary and uncertainty arrays to.  If
+       ``None``, converts to `numpy.single`
+        Default is ``None``
+
+    """
+    if as_single_datatype is None:
+        as_single_datatype = np.single
+    ccd = ccd_in.copy()
+    ccd.data = ccd.data.astype(as_single_datatype)
+    ccd.uncertainty.array = ccd.uncertainty.array.astype(as_single_datatype)
+    return ccd
+
+    # Example data_process using ccdproc.ccd_process, e.g.
+    #import ccdproc as ccdp
+    #def data_process(self, data, **kwargs):
+    #    """Process data using :func:`ccdproc.ccd_process`
+    #    
+    #    Parameters
+    #    ----------
+    #    data : `~astropy.nddata.CCDData`
+    #        Data to process
+    #
+    #    kwargs : kwargs
+    #        Passed to :func:`ccdproc.ccd_process`
+    #        See also: Notes in :class:`bigmultipipe.BigMultiPipe`
+    #        Parameter section 
+    #
+    #    """
+    #    kwargs = self.kwargs_merge(**kwargs)
+    #    data = ccdp.ccd_process(data, **kwargs)
+    #    return data
 
 #bname = '/data/io/IoIO/reduced/Calibration/2020-07-07_ccdT_-10.3_bias_combined.fits'
 #ccd = CCDData.read(bname)

@@ -1,4 +1,4 @@
-"""Module which defines :class:`FbuCCDData`, a fallback unit version of :class:`~astropy.nddata.CCDData`
+"""Supplements to astropy.nddata.ccddata
 """
 
 import warnings
@@ -6,6 +6,28 @@ import warnings
 from astropy import log
 from astropy.io import fits
 from astropy.nddata import CCDData, fits_ccddata_reader
+
+class FilterWarningCCDData(CCDData):
+    warning_filter_list = []
+
+    def __init__(self, *args,
+                 warning_filter_list=None,
+                 **kwargs):
+        self.warning_filter_list = (warning_filter_list
+                                    or self.warning_filter_list)
+        with warnings.catch_warnings():
+            for w in self.warning_filter_list:
+                warnings.filterwarnings("ignore", category=w)
+            super().__init__(*args, **kwargs)
+
+    @classmethod
+    def read(cls, *args, **kwargs):
+        with warnings.catch_warnings():
+            for w in cls.warning_filter_list:
+                warnings.filterwarnings("ignore", category=w)
+            return super(FilterWarningCCDData, cls).read(*args, **kwargs)
+    
+
 
 def fallback_unit_ccddata_reader(filename, *args, 
                                  unit=None,
@@ -64,27 +86,6 @@ def fallback_unit_ccddata_reader(filename, *args,
         return fits_ccddata_reader(filename, *args,
                                    unit=fallback_unit, **kwargs)
 
-class FilterWarningCCDData(CCDData):
-    warning_filter_list = []
-
-    def __init__(self, *args,
-                 warning_filter_list=None,
-                 **kwargs):
-        self.warning_filter_list = (warning_filter_list
-                                    or self.warning_filter_list)
-        with warnings.catch_warnings():
-            for w in self.warning_filter_list:
-                warnings.filterwarnings("ignore", category=w)
-            super().__init__(*args, **kwargs)
-
-    @classmethod
-    def read(cls, *args, **kwargs):
-        with warnings.catch_warnings():
-            for w in cls.warning_filter_list:
-                warnings.filterwarnings("ignore", category=w)
-            return super(FilterWarningCCDData, cls).read(*args, **kwargs)
-    
-
 class FbuCCDData(CCDData):
     """Enable 3-level treatment of ``unit`` specification for
     `~astropy.nddata.CCDData`:
@@ -142,13 +143,13 @@ class FbuCCDData(CCDData):
         # Enable fallback_unit in direct instantiation case.  This
         # requires us to catch the case where the data is already a
         # Quantity or NDData-like and meta may has a BUNIT keyword
-        try:
+        if hasattr(data, 'unit'):
             dataunnit = data.unit
-        except:
+        else:
             dataunnit = None
-        try:
-            hdrunit = meta['BUNIT']
-        except:
+        if meta:
+            hdrunit = meta.get('BUNIT')
+        else:
             hdrunit = None
         unit = unit or dataunnit or hdrunit or fallback_unit
         super().__init__(data, unit=unit, meta=meta, **kwargs)
@@ -164,13 +165,3 @@ class FbuCCDData(CCDData):
                                  **kwargs)
         return cls(ccd, **kwargs)
 
-#rawname = '/data/io/IoIO/raw/20210310/HD 187013-S002-R001-C001-R.fts'
-##ccd = FbuCCDData.read(rawname, fallback_unit='adu')
-##ccd = CCDData.read(rawname, unit='adu')
-##ccd = FbuCCDData(ccd)
-#
-#class FbuFwCCDdata(FilterWarningCCDData, FbuCCDData):
-#    warning_filter_list = [FITSFixedWarning]
-#    pass
-#
-#ccd = FbuFwCCDdata.read(rawname, fallback_unit='adu')

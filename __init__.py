@@ -1,1 +1,1 @@
-from .pipe import *
+from .ccdmultipipe import *
