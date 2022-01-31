@@ -3,12 +3,14 @@
 """
 
 import os
+import warnings
 
 import numpy as np
 
 from astropy import log
 from astropy import units as u
 from astropy.nddata import CCDData
+from astropy.wcs import FITSFixedWarning
 
 from bigmultipipe import BigMultiPipe
 
@@ -116,6 +118,29 @@ class CCDMultiPipe(BigMultiPipe):
         same name.
         Default is ``False``
 
+    fits_fixed_ignore : bool
+
+        Set to ``True`` to avoid excessive warnings when processing
+        files with metadata that don't conform precisely to current
+        astropy/WCS FITS standard keywords (e.g. RADECSYS is now
+        RADESYS).  Because :meth:`CCDMultipipe.pipeline()` starts a
+        separate process for each each file, the default astropy
+        mechanism for limiting warnings:
+        warnings.filterwarnings('once', FITSFixedWarning) only works
+        once per process, which, unless files are grouped in the input
+        in_names, means that every file will generate a warning, thus
+        nullifying the default mechanism for quieting the warnings.
+        Default is ``False``
+
+
+    warning_ignore_list : list
+
+        List of warning objects whose warnings will be ignored.  For
+        convenience, the ``fits_fits_ignore`` parameter can be used to
+        put :class:`astropy.wcsFITSFixedWarning` on this list.  See
+        ``fits_fixed_ignore`` for detailed discussion.  Default is
+        ``[]``
+
     kwargs : kwargs
         Passed to __init__ method of :class:`bigmultipipe.BigMultiPipe`
 
@@ -131,6 +156,8 @@ class CCDMultiPipe(BigMultiPipe):
                  process_expand_factor=3.5,
                  outname_append='_ccdmp',
                  overwrite=False,
+                 fits_fixed_ignore=False,
+                 warning_ignore_list=[],
                  **kwargs):
         self.ccddata_cls = ccddata_cls or self.ccddata_cls
         self.naxis1 = naxis1
@@ -141,6 +168,8 @@ class CCDMultiPipe(BigMultiPipe):
         self.process_expand_factor = process_expand_factor
         self.process_size = process_size
         self.overwrite = overwrite
+        self.fits_fixed_ignore = fits_fixed_ignore
+        self.warning_ignore_list = warning_ignore_list
         super().__init__(outname_append=outname_append,
                          **kwargs)
 
@@ -150,6 +179,8 @@ class CCDMultiPipe(BigMultiPipe):
                  naxis2=None,
                  bitpix=None,
                  process_expand_factor=None,
+                 fits_fixed_ignore=None,
+                 warning_ignore_list=None,
                  **kwargs):
         """Runs pipeline, maximizing processing and memory resources
 
@@ -193,8 +224,20 @@ class CCDMultiPipe(BigMultiPipe):
             process_size = (naxis1 * naxis2
                             * bitpix/8
                             * process_expand_factor)
-        return super().pipeline(in_names, process_size=process_size,
-                                **kwargs)
+        if fits_fixed_ignore is None:
+            fits_fixed_ignore = self.fits_fixed_ignore
+        if warning_ignore_list is None:
+            warning_ignore_list = self.warning_ignore_list
+
+
+        if fits_fixed_ignore:
+            warning_ignore_list.append(FITSFixedWarning)
+            
+        with warnings.catch_warnings():
+            for w in warning_ignore_list:
+                warnings.filterwarnings("ignore", category=w)
+            return super().pipeline(in_names, process_size=process_size,
+                                    **kwargs)
 
     def file_read(self, in_name, **kwargs):
         """Reads FITS file(s) from disk

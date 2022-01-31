@@ -8,22 +8,40 @@ from astropy.io import fits
 from astropy.nddata import CCDData, fits_ccddata_reader
 
 class FilterWarningCCDData(CCDData):
+    """Subclass of CCDData that ignores warnings when a file is read
+
+    Parameters
+    ----------
+    warning_ignore_list : list
+    List of warning objects whose warnings will be ignored.
+    Default is ``[]``
+
+    Notes
+    -----
+    This functionality is probably best left implemented at the
+    :meth:`CCDMultiPipe.pipeline()` level because, as explained in the
+    :class:`CCDMultiPipe` ``fits_fixed_ignore`` parameter
+    documentation, the multiprocessing pipeline code is ultimately
+    responsible for the multiplicity of warnings.
+
+    """
+
     warning_filter_list = []
 
     def __init__(self, *args,
-                 warning_filter_list=None,
+                 warning_ignore_list=None,
                  **kwargs):
-        self.warning_filter_list = (warning_filter_list
-                                    or self.warning_filter_list)
+        self.warning_ignore_list = (warning_ignore_list
+                                    or self.warning_ignore_list)
         with warnings.catch_warnings():
-            for w in self.warning_filter_list:
+            for w in self.warning_ignore_list:
                 warnings.filterwarnings("ignore", category=w)
             super().__init__(*args, **kwargs)
 
     @classmethod
     def read(cls, *args, **kwargs):
         with warnings.catch_warnings():
-            for w in cls.warning_filter_list:
+            for w in cls.warning_ignore_list:
                 warnings.filterwarnings("ignore", category=w)
             return super(FilterWarningCCDData, cls).read(*args, **kwargs)
     
