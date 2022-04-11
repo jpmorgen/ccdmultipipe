@@ -3,6 +3,7 @@
 """
 
 import os
+import argparse
 import warnings
 
 import numpy as np
@@ -13,6 +14,8 @@ from astropy.nddata import CCDData
 from astropy.wcs import FITSFixedWarning
 
 from bigmultipipe import BigMultiPipe
+
+OUTNAME_APPEND = '_ccdmp'
 
 # This subclass of CCDData is a better choice than ccddata_read
 # from utils.fallback_unit import FbuCCDData
@@ -154,7 +157,7 @@ class CCDMultiPipe(BigMultiPipe):
                  naxis2=None,
                  bitpix=None,
                  process_expand_factor=3.5,
-                 outname_append='_ccdmp',
+                 outname_append=OUTNAME_APPEND,
                  overwrite=False,
                  fits_fixed_ignore=False,
                  warning_ignore_list=[],
@@ -269,6 +272,20 @@ class CCDMultiPipe(BigMultiPipe):
         return [self.file_read(name, **kwargs)
                 for name in in_name]
 
+    # Have to implement loop in loops in primitive
+    #def pre_process(self, data, **kwargs):
+    #    """Enable list of CCDData to be processed one at a time"""
+    #    if isinstance(data, list):
+    #        return[self.pre_process(d, **kwargs)
+    #               for d in data]
+    #    return super().pre_process(data, **kwargs)
+    #
+    #def post_process(self, data, kwargs):
+    #    if isinstance(data, list):
+    #        return[self.post_process(d, **kwargs)
+    #               for d in data]
+    #    return super().post_process(data, **kwargs)
+
     def outname_create(self, *args,
                        outname_ext=None,
                        **kwargs):
@@ -300,6 +317,7 @@ class CCDMultiPipe(BigMultiPipe):
                    bscale=None,
                    bzero=None,
                    overwrite=None,
+                   ccddata_write=True,
                    **kwargs):
         """Write `~astropy.nddata.CCDData` as FITS file file.
 
@@ -329,15 +347,19 @@ class CCDMultiPipe(BigMultiPipe):
             If ``True`` overwrite existing file of same name
             Default is ``False``
 
+        ccddata_write : bool
+            If ``False`` do not write `~astropy.nddata.CCDData` file.
+            A similar effect can be achieved with the
+            `bigmultipipe.no_outfile` post-processing routine.  This simply
+            enables the feature with a kwarg.
+            Default is ``True``
+
         kwargs : kwargs
-            Passed to :meth`CCDData.write() <astropy.nddata.CCDData.write>`
-            See also: Notes in :class:`bigmultipipe.BigMultiPipe`
-            Parameter section 
 
         Returns
         -------
         outname : str
-            Name of file written
+            Name of file written, `None` if no file written
 
         Notes
         -----
@@ -355,21 +377,19 @@ class CCDMultiPipe(BigMultiPipe):
 
         The post-processing routine as_single provides a compression of a
         factor of 2, reasonable data precision, and no need to clip.
-        
 
         """
         kwargs = self.kwargs_merge(**kwargs)
-        if overwrite is None:
-            overwrite = self.overwrite
+        if not ccddata_write:
+            return None
+        overwrite = overwrite or self.overwrite
         if as_scaled_int:
             hdul = data.to_hdu()
             hdul[0].scale(type='int16', option='minmax')
-            try:
+            if data.uncertainty is not None:
                 iuncert = hdul.index_of('UNCERT')
                 hdul[iuncert].scale(type='int16', option='minmax',
                                     bscale=bscale, bzero=bzero)
-            except:
-                pass
             hdul.writeto(outname, overwrite=overwrite)
         else:
             data.write(outname, overwrite=overwrite)
@@ -422,6 +442,78 @@ def as_single(ccd_in,
     #    kwargs = self.kwargs_merge(**kwargs)
     #    data = ccdp.ccd_process(data, **kwargs)
     #    return data
+
+#############################
+# argparse_handler mixin
+#############################
+class CCDArgparseMixin:
+
+    # This modifies BMPArgparseMixin outname_append
+    outname_append = OUTNAME_APPEND
+
+    def add_naxis1(self, 
+                   default=None,
+                   help=None,
+                   **kwargs):
+        option = 'naxis1'
+        if help is None:
+            help = 'number of X-axis pixels'
+        self.parser.add_argument('--' + option, type=int,
+                            default=default, help=help, **kwargs)
+
+    def add_naxis2(self, 
+                   default=None,
+                   help=None,
+                   **kwargs):
+        option = 'naxis2'
+        if help is None:
+            help = 'number of Y-axis pixels'
+        self.parser.add_argument('--' + option, type=int,
+                            default=default, help=help, **kwargs)
+
+    def add_bitpix(self, 
+                   help=None,
+                   default=8,
+                   **kwargs):
+        option = 'bitpix'
+        if help is None:
+            help = f'number of bits per pixel (default: {default})'
+        self.parser.add_argument('--' + option, type=int,
+                            default=default, help=help, **kwargs)
+
+    def add_process_expand_factor(self, 
+                                  default=None,
+                                  help=None,
+                                  **kwargs):
+        option = 'process_expand_factor'
+        if help is None:
+            help = 'Expansion factor to apply to base CCD size'
+        self.parser.add_argument('--' + option, type=float,
+                            default=default, help=help, **kwargs)
+
+    def add_overwrite(self, 
+                      default=False,
+                      help=None,
+                      **kwargs):
+        option = 'overwrite'
+        if help is None:
+            help = (f'Overwrite output files of the same name')
+        self.parser.add_argument('--' + option,
+                                 action=argparse.BooleanOptionalAction,
+                                 default=default,
+                                 help=help, **kwargs)
+
+    def add_fits_fixed_ignore(self, 
+                      default=False,
+                      help=None,
+                      **kwargs):
+        option = 'fits_fixed_ignore'
+        if help is None:
+            help = (f'Ignore fits_fixed warnings')
+        self.parser.add_argument('--' + option,
+                                 action=argparse.BooleanOptionalAction,
+                                 default=default,
+                                 help=help, **kwargs)
 
 #bname = '/data/io/IoIO/reduced/Calibration/2020-07-07_ccdT_-10.3_bias_combined.fits'
 #ccd = CCDData.read(bname)
