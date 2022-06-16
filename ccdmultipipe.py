@@ -13,7 +13,7 @@ from astropy import units as u
 from astropy.nddata import CCDData
 from astropy.wcs import FITSFixedWarning
 
-from bigmultipipe import BigMultiPipe
+from bigmultipipe import BigMultiPipe, assure_list
 
 OUTNAME_APPEND = '_ccdmp'
 
@@ -227,11 +227,8 @@ class CCDMultiPipe(BigMultiPipe):
             process_size = (naxis1 * naxis2
                             * bitpix/8
                             * process_expand_factor)
-        if fits_fixed_ignore is None:
-            fits_fixed_ignore = self.fits_fixed_ignore
-        if warning_ignore_list is None:
-            warning_ignore_list = self.warning_ignore_list
-
+        fits_fixed_ignore = fits_fixed_ignore or self.fits_fixed_ignore
+        warning_ignore_list = warning_ignore_list or self.warning_ignore_list
 
         if fits_fixed_ignore:
             warning_ignore_list.append(FITSFixedWarning)
@@ -379,6 +376,9 @@ class CCDMultiPipe(BigMultiPipe):
         factor of 2, reasonable data precision, and no need to clip.
 
         """
+        # Explicitly call BigMultiPipe.file_write, which just creates
+        # outdir
+        BigMultiPipe(self).file_write(data, outname, **kwargs)
         kwargs = self.kwargs_merge(**kwargs)
         if not ccddata_write:
             return None
@@ -398,6 +398,41 @@ class CCDMultiPipe(BigMultiPipe):
 #############################
 # Post-processing routines
 #############################
+def ccd_meta_to_bmp_meta(ccd, bmp_meta=None,
+                         ccd_meta_to_bmp_meta_keys=[],
+                         **kwargs):
+    """CCDMultiPipe post-processing routine to copy ccd metadata to
+bigmultipipe metadata
+
+    Parameters
+    ----------
+    ccd : `~astropy.nddata.CCDData`
+        Input `~astropy.nddata.CCDData` object
+
+    bmp_meta : dict
+        `~bigmultipipe.BigMultiPipe` metadata
+
+    ccd_meta_to_bmp_meta_keys : str, tuple or list
+        Ultimately, this is going to end up as a list, where the
+        elements can be `str` or `tuple.`  If `tuple`, the first
+        element must be `str`, the key name to be copied and the
+        second element is the unit
+        
+
+    """
+    bmp_meta = bmp_meta or {}
+    ccd_meta_to_bmp_meta_keys = assure_list(ccd_meta_to_bmp_meta_keys)
+    for ku in ccd_meta_to_bmp_meta_keys:
+        if isinstance(ku, tuple):
+            k = ku[0]
+            unit = ku[1]
+        val = ccd.meta[k]
+        if unit is None:
+            bmp_meta[k] = val
+        else:
+            bmp_meta[k] = val*unit
+    return ccd
+
 def as_single(ccd_in,
               as_single_datatype=None,
               **kwargs):
@@ -451,51 +486,63 @@ class CCDArgparseMixin:
     # This modifies BMPArgparseMixin outname_append
     outname_append = OUTNAME_APPEND
 
-    def add_naxis1(self, 
+    def add_outname_ext(self,
+                           option='outname_ext',
+                           default=None,
+                           help=None,
+                           **kwargs):
+        default = default or self.outname_ext
+        if help is None:
+            help = (f'string to ext to output files to prevent '
+                    f'overwrite (default: {default})')
+        self.parser.add_argument('--' + option, default=default,
+                                 help=help, **kwargs)
+
+    def add_naxis1(self,
+                   option='naxis1',
                    default=None,
                    help=None,
                    **kwargs):
-        option = 'naxis1'
         if help is None:
             help = 'number of X-axis pixels'
         self.parser.add_argument('--' + option, type=int,
                             default=default, help=help, **kwargs)
 
-    def add_naxis2(self, 
+    def add_naxis2(self,
+                   option = 'naxis2',
                    default=None,
                    help=None,
                    **kwargs):
-        option = 'naxis2'
         if help is None:
             help = 'number of Y-axis pixels'
         self.parser.add_argument('--' + option, type=int,
                             default=default, help=help, **kwargs)
 
-    def add_bitpix(self, 
+    def add_bitpix(self,
+                   option='bitpix',
                    help=None,
                    default=8,
                    **kwargs):
-        option = 'bitpix'
         if help is None:
             help = f'number of bits per pixel (default: {default})'
         self.parser.add_argument('--' + option, type=int,
                             default=default, help=help, **kwargs)
 
-    def add_process_expand_factor(self, 
+    def add_process_expand_factor(self,
+                                  option='process_expand_factor',
                                   default=None,
                                   help=None,
                                   **kwargs):
-        option = 'process_expand_factor'
         if help is None:
             help = 'Expansion factor to apply to base CCD size'
         self.parser.add_argument('--' + option, type=float,
                             default=default, help=help, **kwargs)
 
     def add_overwrite(self, 
+                      option='overwrite',
                       default=False,
                       help=None,
                       **kwargs):
-        option = 'overwrite'
         if help is None:
             help = (f'Overwrite output files of the same name')
         self.parser.add_argument('--' + option,
@@ -503,11 +550,11 @@ class CCDArgparseMixin:
                                  default=default,
                                  help=help, **kwargs)
 
-    def add_fits_fixed_ignore(self, 
-                      default=False,
-                      help=None,
-                      **kwargs):
-        option = 'fits_fixed_ignore'
+    def add_fits_fixed_ignore(self,
+                              option='fits_fixed_ignore',
+                              default=False,
+                              help=None,
+                              **kwargs):
         if help is None:
             help = (f'Ignore fits_fixed warnings')
         self.parser.add_argument('--' + option,

@@ -1,4 +1,5 @@
 """Supplements to astropy.nddata.ccddata
+
 """
 
 import warnings
@@ -160,16 +161,20 @@ class FbuCCDData(CCDData):
         ccddata_reader = ccddata_reader or self.ccddata_reader
         # Enable fallback_unit in direct instantiation case.  This
         # requires us to catch the case where the data is already a
-        # Quantity or NDData-like and meta may has a BUNIT keyword
-        if hasattr(data, 'unit'):
-            dataunnit = data.unit
-        else:
-            dataunnit = None
-        if meta:
-            hdrunit = meta.get('BUNIT')
-        else:
-            hdrunit = None
-        unit = unit or dataunnit or hdrunit or fallback_unit
+        # Quantity or NDData-like and meta may has a BUNIT keyword.
+        # --> OOPS this has unintended consequences when one is trying
+        # to create a CCDData from a scalar, and forgets to set the
+        # unit.  This happens in a subtle way when using
+        # CCDData arithmetic
+        #if hasattr(data, 'unit'):
+        #    dataunnit = data.unit
+        #else:
+        #    dataunnit = None
+        #if meta:
+        #    hdrunit = meta.get('BUNIT')
+        #else:
+        #    hdrunit = None
+        #unit = unit or dataunnit or hdrunit# or fallback_unit
         super().__init__(data, unit=unit, meta=meta, **kwargs)
 
     @classmethod
