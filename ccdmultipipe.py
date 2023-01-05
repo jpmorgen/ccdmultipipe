@@ -283,7 +283,7 @@ class CCDMultiPipe(BigMultiPipe):
     #               for d in data]
     #    return super().post_process(data, **kwargs)
 
-    def outname_create(self, *args,
+    def outname_create(self, *args, meta=None,
                        outname_ext=None,
                        **kwargs):
         """Create output filename (including path)
@@ -302,11 +302,12 @@ class CCDMultiPipe(BigMultiPipe):
         \*\*kwargs : optional
             Passed to :meth:`bigmultipipe.Bigmultipipe.outname_create` 
         """
-        outname = super().outname_create(*args, **kwargs)
+        outname = super().outname_create(*args, meta=meta, **kwargs)
         if outname_ext is None:
             return outname
         base, _ = os.path.splitext(outname)
         outname = base + outname_ext
+        meta['outname'] = outname
         return outname
 
     def file_write(self, data, outname,
@@ -455,7 +456,8 @@ def as_single(ccd_in,
         as_single_datatype = np.single
     ccd = ccd_in.copy()
     ccd.data = ccd.data.astype(as_single_datatype)
-    ccd.uncertainty.array = ccd.uncertainty.array.astype(as_single_datatype)
+    if ccd.uncertainty is not None:
+        ccd.uncertainty.array = ccd.uncertainty.array.astype(as_single_datatype)
     return ccd
 
     # Example data_process using ccdproc.ccd_process, e.g.
